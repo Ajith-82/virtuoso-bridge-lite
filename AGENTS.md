@@ -320,12 +320,6 @@ Cadence: aim for **≤10 days between runs** (gives a 4-day safety margin
 on the 14-day window). If a longer gap happened, the missing days are gone
 forever — don't try to fabricate them.
 
-If for any reason you want the daily auto-run back: create a classic PAT
-with `public_repo` scope (or fine-grained PAT with `Administration: read`),
-save it as repo secret `TRAFFIC_PAT`, change `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}`
-to `${{ secrets.TRAFFIC_PAT }}` in the yml, and re-enable the `schedule:`
-block. The original PAT-fallback note is preserved in the yml as a comment.
-
 ## Skills & Reference Map
 
 When working on a task, check this table to find relevant skills and references.
