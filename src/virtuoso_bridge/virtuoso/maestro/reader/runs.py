@@ -15,6 +15,7 @@ Two public entry points:
 from __future__ import annotations
 
 import csv
+import logging
 import re
 import tempfile
 import uuid
@@ -25,6 +26,8 @@ from virtuoso_bridge import VirtuosoClient
 from ._parse_skill import _parse_skill_str_list
 from ._skill import _q, _get_test, _unique_remote_wave_path
 from .session import natural_sort_histories
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -95,10 +98,21 @@ def read_results(client: VirtuosoClient, session: str,
                     f'maeGetEnvOption("{test}" ?option "cell" ?session "{session}")')
                 cell = (r.output or "").strip('"')
     if not lib or not cell:
+        logger.warning(
+            "read_results: missing lib/cell (lib=%r cell=%r session=%r); "
+            "session likely lacks an active test — pass lib= and cell= explicitly",
+            lib, cell, session,
+        )
         return {}
 
     test = _get_test(client, session)
     if not test:
+        logger.warning(
+            "read_results: maeGetSetup returned no test for session=%r "
+            "(typical for fresh ADE Explorer sessions that haven't gone "
+            "through maeSetupTest); returning empty",
+            session,
+        )
         return {}
 
     # Pick the latest history with actual results (newest-first scan).
@@ -108,9 +122,18 @@ def read_results(client: VirtuosoClient, session: str,
         latest_history = _find_latest_history_with_results(
             client, lib=lib, cell=cell, test=test)
     if not latest_history or latest_history == "nil":
+        logger.warning(
+            "read_results: no history with results for %s/%s test=%r "
+            "(passed history=%r); returning empty",
+            lib, cell, test, history,
+        )
         return {}
 
     # Export the full Detail table to a remote tmp CSV; scp; parse.
+    # maeExportOutputView's return contract is not portable across
+    # Cadence versions -- some echo the filename, others just return
+    # ``t``/``nil`` -- so the only reliable success signal is whether
+    # the remote CSV materialised.  Let download_file be the arbiter.
     remote_csv = f"/tmp/vb_results_{uuid.uuid4().hex}.csv"
     export_cmd = (
         f'maeExportOutputView('
@@ -121,16 +144,21 @@ def read_results(client: VirtuosoClient, session: str,
         f'  ?fileName "{remote_csv}"'
         f')'
     )
-    r = q("maeExportOutputView", export_cmd)
-    if not r or "/tmp/" not in r:
-        return {}
+    skill_out = q("maeExportOutputView", export_cmd)
 
     local_csv = Path(tempfile.gettempdir()) / f"vb_results_{uuid.uuid4().hex}.csv"
     csv_text = ""
     try:
         client.download_file(remote_csv, str(local_csv))
         csv_text = local_csv.read_text(encoding="utf-8", errors="replace")
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "read_results: maeExportOutputView did not produce a fetchable "
+            "CSV (remote=%s, skill_out=%r, exc=%s); returning empty.  "
+            "This usually means the SKILL call failed silently — try the "
+            "command in CIW manually to see Cadence's error.",
+            remote_csv, skill_out, exc,
+        )
         return {}
     finally:
         try:
