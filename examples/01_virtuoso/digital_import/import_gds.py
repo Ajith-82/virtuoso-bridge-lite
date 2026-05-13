@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import shlex
 import sys
+import time
 from pathlib import Path
 
 from virtuoso_bridge import VirtuosoClient
@@ -81,6 +82,25 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # MSYS / Git Bash path-mangling check.  Git Bash on Windows
+    # rewrites Linux-style /home/... into <msys_root>/home/... before
+    # argv reaches Python — strmin then can't find the file and the
+    # error message points at the *mangled* path, which is confusing.
+    # Detect and bail with a clear pointer to the fix.
+    if args.gds.startswith(("C:/", "C:\\", "D:/", "D:\\")) and "/home/" in args.gds.replace("\\", "/"):
+        unmangled = "/home/" + args.gds.replace("\\", "/").split("/home/", 1)[1]
+        sys.exit(
+            "ERROR: GDS path appears mangled by Git Bash / MSYS / Cygwin.\n"
+            f"  Received:  {args.gds}\n"
+            f"  Expected:  {unmangled}\n"
+            "  Cause:     these shells translate Linux paths like /home/... to "
+            "<msys_root>/home/... before Python sees the argv.\n"
+            "  Fix:       on Windows, run this script from PowerShell, cmd.exe, "
+            "or WSL — NOT Git Bash.\n"
+            "             (Claude Code: prefer the PowerShell tool over Bash for "
+            "this script on Windows hosts.)"
+        )
+
     client = VirtuosoClient.from_env()
 
     # 1. Make sure the target library is registered in cds.lib.
@@ -114,34 +134,58 @@ def main() -> int:
     cmd = " ".join(parts)
 
     print(f"[strmin] {cmd}")
-    r = client.execute_skill(f"system({_q(cmd)})")
-    rc_text = (r.output or "").strip()
-    try:
-        rc = int(rc_text)
-    except ValueError:
-        rc = -1
-    if rc != 0:
-        sys.exit(
-            f"strmin failed (system() returned {rc_text!r}).  "
-            f"Look at strmIn.log in Virtuoso's working directory for details."
-        )
+    # SKILL system() return is unreliable for strmin — observed
+    # 2026-05-13: strmin keeps running on the remote after Python
+    # receives empty / garbled rc, so sequential strmin calls race
+    # on lib state ("library X is not in cds.lib" from the second
+    # call while the first hasn't committed).  Don't trust rc;
+    # poll for the target cellview to appear instead.
+    client.execute_skill(f"system({_q(cmd)})")
 
-    # 3. Refresh Virtuoso's library cache so Library Manager sees the cells.
-    client.execute_skill("ddUpdateLibList()")
-
-    # 4. Verify by counting layout objects in the imported cell.
     cell = args.cell or Path(args.gds).name.split(".")[0]
-    skill = (
-        f"let((cv) "
-        f"  cv=dbOpenCellViewByType({_q(args.target_lib)} {_q(cell)} \"layout\" nil \"r\") "
-        f"  if(cv "
-        f"     sprintf(nil \"instances=%d shapes=%d bbox=%L\" "
-        f"             length(cv~>instances) length(cv~>shapes) cv~>bBox) "
-        f"     \"OPEN_FAILED — different cell name? See strmIn.log.\")) "
+    # ddGetObj-first gate: dbOpenCellViewByType in "r" mode prints
+    # `WARNING (DB-270212)` to CIW each time the view is missing.
+    # During the poll loop that's a CIW warning every 3 s until the
+    # view appears — observed 16+ noise lines per import.  ddGetObj
+    # is silent when the view doesn't exist yet, so use it as a
+    # cheap gate and only open the cv when ddGetObj confirms it.
+    verify_skill = (
+        f"let((vobj cv) "
+        f"  vobj=ddGetObj({_q(args.target_lib)} {_q(cell)} \"layout\") "
+        f"  if(vobj "
+        f"     progn( "
+        f"       cv=dbOpenCellViewByType({_q(args.target_lib)} {_q(cell)} \"layout\" nil \"r\") "
+        f"       if(cv "
+        f"          sprintf(nil \"instances=%d shapes=%d bbox=%L\" "
+        f"                  length(cv~>instances) length(cv~>shapes) cv~>bBox) "
+        f"          nil)) "
+        f"     nil)) "
     )
-    r = client.execute_skill(skill)
-    print(f"[OK] {args.target_lib}/{cell}/layout: {r.output}")
-    return 0
+
+    timeout_s = 600
+    poll_interval = 3
+    deadline = time.time() + timeout_s
+    next_log = time.time() + 30
+    while True:
+        # Refresh lib list so Library Manager sees newly-written cells.
+        client.execute_skill("ddUpdateLibList()")
+        r = client.execute_skill(verify_skill)
+        out = (r.output or "").strip().strip('"')
+        if out.startswith("instances="):
+            print(f"[OK] {args.target_lib}/{cell}/layout: {out}")
+            return 0
+        now = time.time()
+        if now >= deadline:
+            sys.exit(
+                f"strmin: {args.target_lib}/{cell}/layout did not appear "
+                f"within {timeout_s}s. Check strmIn.log in Virtuoso's "
+                f"working directory."
+            )
+        if now >= next_log:
+            elapsed = int(now - (deadline - timeout_s))
+            print(f"[wait] {elapsed}s — strmin still running, polling for cellview...")
+            next_log = now + 30
+        time.sleep(poll_interval)
 
 
 if __name__ == "__main__":
