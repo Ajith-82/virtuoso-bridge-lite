@@ -113,11 +113,15 @@ All commands take `-p PROFILE` / `--env PATH` to pick a non-default config; run 
 |---|---|
 | **Tunnel / lifecycle** | |
 | `init [user@host] [-J jump]` | Write a starter `.env` (no args = empty template) |
-| `start` | Start SSH tunnel + deploy daemon |
+| `start [--bind-venv]` | Start SSH tunnel + deploy daemon; `--bind-venv` (with `-p X`) also binds the active virtualenv to profile `X` |
 | `stop` | Stop the SSH tunnel |
 | `restart` | Restart tunnel + daemon |
 | `status` | Tunnel + daemon health + Spectre availability |
 | `license` | Check Spectre license availability |
+| **Profile binding** | |
+| `profile show` | Print the resolved profile, its source, and the active venv binding path |
+| `profile bind PROFILE --venv` | Pin the active virtualenv to `PROFILE` (naked `from_env()` calls in that venv resolve to it) |
+| `profile clear --venv` | Remove the venv binding |
 | **SKILL execution** | |
 | `load FILE.il` | Run a `.il` file in Virtuoso (uploads it in SSH mode). VS Code task–friendly; outputs `VirtuosoResult` JSON |
 | `eval 'EXPR'` / `eval --stdin` | Run an inline SKILL expression; supports multi-statement via auto-wrapped `progn(...)` |
