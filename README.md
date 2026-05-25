@@ -57,6 +57,10 @@ Spectre.
 ## Quick Start
 
 ```bash
+# 0. Get the source
+git clone https://github.com/Arcadia-1/virtuoso-bridge-lite.git
+cd virtuoso-bridge-lite
+
 # 1. Install in a virtual environment
 uv venv .venv
 source .venv/bin/activate
@@ -70,6 +74,9 @@ virtuoso-bridge init user@host [-J user@jump-host]
 virtuoso-bridge start          # starts tunnel and prints the CIW load(...) line
 virtuoso-bridge status         # tunnel + Virtuoso daemon + Spectre availability
 ```
+
+On Windows PowerShell, replace the activation line with
+`.\.venv\Scripts\Activate.ps1`.
 
 ```python
 from virtuoso_bridge import VirtuosoClient
