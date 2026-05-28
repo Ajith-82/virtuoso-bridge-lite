@@ -32,6 +32,9 @@ results = client.find_skill("^db.*$", mode="regex")     # Python regex
 
 # Limit results
 results = client.find_skill("dbOpen", limit=10)
+
+# Also search in descriptions (default: False — name-only)
+results = client.find_skill("Returns the value", include_desc=True)
 ```
 
 **Returns:** `List[SKILLEntry]`, each entry contains:
@@ -115,6 +118,9 @@ Use `skill-find` to locate other functions, then `skill-info` for details.
 # Search SKILL functions
 virtuoso-bridge skill-find dbOpenCellView
 virtuoso-bridge skill-find "^db.*" --mode regex --limit 20
+
+# Also search in descriptions (may return more noisy results)
+virtuoso-bridge skill-find "open.*cellview" --mode regex --include-desc
 
 # Get detailed docs
 virtuoso-bridge skill-info absGetOption

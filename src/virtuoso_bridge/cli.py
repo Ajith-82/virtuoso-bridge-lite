@@ -864,7 +864,7 @@ _EXPORT_VISIO_OPTS: dict = {
 }
 
 
-def cli_find(*, query: str | None, mode: str, limit: int, json_output: bool) -> int:
+def cli_find(*, query: str | None, mode: str, limit: int, include_desc: bool, json_output: bool) -> int:
     """Search SKILL API documentation from Cadence .fnd files.
 
     On first run for a given server, downloads the SKILL Finder database
@@ -883,7 +883,7 @@ def cli_find(*, query: str | None, mode: str, limit: int, json_output: bool) -> 
         print("Error: query argument required for 'skill-find'", file=sys.stderr)
         return 1
 
-    results = client.find_skill(query or "", mode=mode, limit=limit)
+    results = client.find_skill(query or "", mode=mode, limit=limit, include_desc=include_desc)
 
     if not query:
         print("Error: query argument required for 'skill-find'", file=sys.stderr)
@@ -1311,6 +1311,8 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Search mode (default: fuzzy)")
     sp_skill_find.add_argument("-n", "--limit", type=int, default=50,
                           help="Maximum results to return (default: 50)")
+    sp_skill_find.add_argument("--include-desc", action="store_true",
+                          help="Also search in the description field")
     sp_skill_find.add_argument("--json", action="store_true",
                           help="Output results as JSON")
     sp_skill_find.add_argument("-p", "--profile", default=None,
@@ -1462,6 +1464,7 @@ def main(argv: list[str] | None = None) -> int:
             query=getattr(args, "query", None),
             mode=getattr(args, "mode", "fuzzy"),
             limit=getattr(args, "limit", 50),
+            include_desc=getattr(args, "include_desc", False),
             json_output=getattr(args, "json", False),
         ),
         "skill-info": lambda: cli_skill_info(

@@ -777,6 +777,7 @@ let((result winName ciwNum)
         *,
         mode: str = "fuzzy",
         limit: int = 50,
+        include_desc: bool = False,
         source_dir: str | Path | None = None,
         cache_dir: str | Path | None = None,
     ) -> list[dict]:
@@ -805,6 +806,8 @@ let((result winName ciwNum)
 
         limit : int
             Maximum results to return (default 50).
+        include_desc : bool
+            Also search in the description field (default: False).
         source_dir : str | Path | None
             Override the SKILL Finder source directory.  If None, the
             directory is auto-discovered on the remote server.
@@ -902,7 +905,7 @@ let((result winName ciwNum)
             logger.warning("find_skill: failed to load .fnd files — %s", exc)
             return []
 
-        results = finder.search(query, mode=mode, limit=limit)
+        results = finder.search(query, mode=mode, limit=limit, include_desc=include_desc)
         return [e.to_dict() for e in results]
 
 
@@ -1017,8 +1020,15 @@ let((result winName ciwNum)
 
             # Parse .tgf to find which HTML files are needed for this function
             entries = parse_tgf_index(tgf_local_path)
-            key = func_name.lower()
-            entry = entries.get(key)
+            entry = entries.get(func_name.lower())
+            if entry is None:
+                # OCEAN/ViVA_SKILL functions are indexed with a suffix
+                # (e.g. ocnPrint_OCEAN).  Try appending known suffixes so that
+                # ``skill-info ocnPrint`` finds ocnPrint_OCEAN automatically.
+                for suffix in ("_ocean", "_viva_skill"):
+                    entry = entries.get(func_name.lower() + suffix)
+                    if entry is not None:
+                        break
             if entry is None:
                 return None
 
@@ -1084,8 +1094,12 @@ let((result winName ciwNum)
             # Local mode
             tgf_path = doc_root / "api_more_info" / "api_more_info.tgf"
             entries = parse_tgf_index(tgf_path)
-            key = func_name.lower()
-            entry = entries.get(key)
+            entry = entries.get(func_name.lower())
+            if entry is None:
+                for suffix in ("_OCEAN", "_ViVA_SKILL"):
+                    entry = entries.get(func_name.lower() + suffix)
+                    if entry is not None:
+                        break
             if entry is None:
                 return None
 

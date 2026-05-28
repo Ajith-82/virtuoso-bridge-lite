@@ -10,10 +10,10 @@ from virtuoso_bridge.virtuoso.skill_finder import SKILLFinder
 
 class _FakeSkillClient:
     def __init__(self) -> None:
-        self.find_calls: list[tuple[str, str, int]] = []
+        self.find_calls: list[tuple[str, str, int, bool]] = []
 
-    def find_skill(self, query: str, *, mode: str = "fuzzy", limit: int = 50):
-        self.find_calls.append((query, mode, limit))
+    def find_skill(self, query: str, *, mode: str = "fuzzy", limit: int = 50, include_desc: bool = False):
+        self.find_calls.append((query, mode, limit, include_desc))
         return [
             {
                 "name": "dbOpenCellViewByType",
@@ -54,7 +54,7 @@ def test_skill_find_json_flag_emits_json(capsys, monkeypatch):
     rc = main(["skill-find", "dbOpen", "--json", "--mode", "prefix", "--limit", "3"])
 
     assert rc == 0
-    assert fake.find_calls == [("dbOpen", "prefix", 3)]
+    assert fake.find_calls == [("dbOpen", "prefix", 3, False)]
     assert seen_profiles == [None]
     parsed = json.loads(capsys.readouterr().out)
     assert parsed[0]["name"] == "dbOpenCellViewByType"
@@ -64,6 +64,16 @@ def test_skill_find_passes_explicit_profile(capsys, monkeypatch):
     _fake, seen_profiles = _patch_cli_client(monkeypatch)
 
     rc = main(["skill-find", "dbOpen", "-p", "worker1", "--json"])
+
+    assert rc == 0
+    assert seen_profiles == ["worker1"]
+    assert json.loads(capsys.readouterr().out)[0]["source_file"] == "database.fnd"
+
+
+def test_skill_find_passes_include_desc_with_explicit_profile(capsys, monkeypatch):
+    fake, seen_profiles = _patch_cli_client(monkeypatch)
+
+    rc = main(["skill-find", "open.*cellview", "--mode", "regex", "-p", "worker1", "--json", "--include-desc"])
 
     assert rc == 0
     assert seen_profiles == ["worker1"]

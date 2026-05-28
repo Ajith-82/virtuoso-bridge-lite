@@ -194,6 +194,7 @@ class SKILLFinder:
         *,
         mode: SearchMode | str = SearchMode.FUZZY,
         limit: int = 50,
+        include_desc: bool = False,
     ) -> list[SkillEntry]:
         """Search for SKILL entries matching *query*.
 
@@ -205,6 +206,8 @@ class SKILLFinder:
             Search mode (default: fuzzy substring).
         limit : int
             Maximum number of results (default: 50).
+        include_desc : bool
+            Also search in the description field (default: False).
 
         Returns
         -------
@@ -221,37 +224,47 @@ class SKILLFinder:
                 mode = SearchMode.FUZZY
 
         if mode == SearchMode.EXACT:
-            results = self._exact(query)
+            results = self._exact(query, include_desc)
         elif mode == SearchMode.PREFIX:
-            results = self._prefix(query)
+            results = self._prefix(query, include_desc)
         elif mode == SearchMode.SUFFIX:
-            results = self._suffix(query)
+            results = self._suffix(query, include_desc)
         elif mode == SearchMode.REGEX:
-            results = self._regex(query)
+            results = self._regex(query, include_desc)
         else:
-            results = self._fuzzy(query)
+            results = self._fuzzy(query, include_desc)
 
         return sorted(results, key=lambda e: e.name)[:limit]
 
-    def _exact(self, query: str) -> list[SkillEntry]:
+    def _exact(self, query: str, include_desc: bool = False) -> list[SkillEntry]:
         return [e for e in self.entries if e.name == query]
 
-    def _prefix(self, query: str) -> list[SkillEntry]:
-        return [e for e in self.entries if e.name.startswith(query)]
+    def _prefix(self, query: str, include_desc: bool = False) -> list[SkillEntry]:
+        ql = query.lower()
+        return [e for e in self.entries
+                if e.name.startswith(query)
+                or (include_desc and ql in e.description.lower())]
 
-    def _suffix(self, query: str) -> list[SkillEntry]:
-        return [e for e in self.entries if e.name.endswith(query)]
+    def _suffix(self, query: str, include_desc: bool = False) -> list[SkillEntry]:
+        ql = query.lower()
+        return [e for e in self.entries
+                if e.name.endswith(query)
+                or (include_desc and ql in e.description.lower())]
 
-    def _regex(self, query: str) -> list[SkillEntry]:
+    def _regex(self, query: str, include_desc: bool = False) -> list[SkillEntry]:
         try:
             pattern = re.compile(query, re.IGNORECASE)
         except re.error:
             return []
-        return [e for e in self.entries if pattern.search(e.name)]
+        return [e for e in self.entries
+                if pattern.search(e.name)
+                or (include_desc and pattern.search(e.description))]
 
-    def _fuzzy(self, query: str) -> list[SkillEntry]:
+    def _fuzzy(self, query: str, include_desc: bool = False) -> list[SkillEntry]:
         q = query.lower()
-        return [e for e in self.entries if q in e.name.lower()]
+        return [e for e in self.entries
+                if q in e.name.lower()
+                or (include_desc and q in e.description.lower())]
 
     # ------------------------------------------------------------------
     # CLI helper
