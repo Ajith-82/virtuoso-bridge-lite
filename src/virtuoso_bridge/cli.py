@@ -330,6 +330,23 @@ def _print_load_hint(setup_path: str) -> None:
     print(f"    load(\"{setup_path}\")")
 
 
+def _print_stale_daemon_hint() -> None:
+    """Print recovery guidance for a CIW daemon left from another setup."""
+    print("\n  If CIW says \"already running\", load() did not replace the existing daemon.")
+    print("  To switch profile/port, run in CIW:")
+    print("    RBStop()")
+    print("    load(\".../virtuoso_setup.il\")")
+    print("  If that does not clear it, use RBStopAll() before loading again.")
+
+
+def _print_cross_user_daemon_failure(error: str) -> None:
+    from virtuoso_bridge.daemon_guard import OVERRIDE_ENV
+
+    print("\n[daemon identity] FAILED")
+    print(f"  {error}")
+    print(f"  Set {OVERRIDE_ENV}=1 only if this cross-user connection is intentional.")
+
+
 def _print_status() -> int:
     _load_cli_env()
     profile = _get_cli_profile()
@@ -396,6 +413,7 @@ def _print_status() -> int:
 
     # Daemon (Virtuoso CIW)
     # For local mode, check daemon if we have state (don't require 'running')
+    daemon_user_ok = True
     can_check_daemon = (is_local and state) or (running and state)
     if can_check_daemon:
         if state is None:
@@ -407,6 +425,20 @@ def _print_status() -> int:
             ok = vc.test_connection(timeout=5)
             print(f"\n[daemon] {'OK - connected to Virtuoso CIW' if ok else 'NO RESPONSE'}")
             if ok:
+                from virtuoso_bridge.daemon_guard import check_daemon_user
+
+                try:
+                    user_check = check_daemon_user(vc, profile=profile, timeout=5)
+                    if user_check.daemon_user:
+                        print(f"  daemon user: {user_check.daemon_user}")
+                    if user_check.expected_user:
+                        print(f"  tunnel user: {user_check.expected_user}")
+                    if not user_check.ok:
+                        daemon_user_ok = False
+                        _print_cross_user_daemon_failure(user_check.error)
+                except Exception as exc:
+                    print(f"  daemon user: unavailable ({exc})")
+
                 # Query Virtuoso environment info
                 for skill_expr, label in [
                     ('getHostName()', 'hostname'),
@@ -429,6 +461,7 @@ def _print_status() -> int:
                 )
             if not ok and setup_path:
                 _print_load_hint(setup_path)
+                _print_stale_daemon_hint()
         except Exception as e:
             print(f"\n[daemon] error: {e}")
     elif not is_local and not running:
@@ -442,8 +475,8 @@ def _print_status() -> int:
 
     print("\n========================================================================")
     if is_local:
-        return 0  # local mode: no tunnel to check
-    return 0 if running else 1
+        return 0 if daemon_user_ok else 1
+    return 0 if running and daemon_user_ok else 1
 
 
 def _print_spectre_status(profile: str | None, suffix: str) -> None:
