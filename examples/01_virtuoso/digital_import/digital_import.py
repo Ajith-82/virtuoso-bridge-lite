@@ -39,6 +39,11 @@ import tempfile
 import time
 from pathlib import Path
 
+# Git-Bash on Windows rewrites POSIX paths like /home/zhangz/... that we
+# pass to remote tools, turning them into "C:/Program Files/Git/home/...".
+# Disable that translation for any child process this script spawns.
+os.environ.setdefault("MSYS_NO_PATHCONV", "1")
+
 from virtuoso_bridge.virtuoso.ops import q as _q
 
 SRAM_CELL_REGEX = re.compile(r"\bTS1N28[A-Z0-9]+\b")
@@ -132,21 +137,36 @@ def main() -> int:
     ap.add_argument("--gds", default=None,
                     help="Override design GDS path (default: PNR_SIGNOFF/RESULTS/<top>.route_tapeout.gds)")
     ap.add_argument("--verilog", default=None,
-                    help="Override design Verilog path (default: same dir, .ipg_import_elc.v)")
+                    help="Override design Verilog path (default: probe _import.v then .ipg_import_elc.v)")
     args = ap.parse_args()
 
     pnr_dir = f"{DIG_SYN_ROOT}/{args.top}/apr/PNR_SIGNOFF/RESULTS"
     if args.gds is None:
         args.gds = f"{pnr_dir}/{args.top}.route_tapeout.gds"
-    if args.verilog is None:
-        args.verilog = f"{pnr_dir}/{args.top}.ipg_import_elc.v"
-
-    # Auto-detect SRAM cell from the Verilog when not specified.  The same
-    # client is reused for the SRAM pre-import step below.
+    # Probe the bridge for the verilog path or use later for sram detect.
+    # Canonical signoff.tcl writes `${top}_import.v`; legacy projects use
+    # `${top}.ipg_import_elc.v`.  Use SKILL isFile()/isFileReadable() rather
+    # than shell test -s — run_shell_command returns the SKILL return value
+    # ("t"/"nil"), not stdout, so `test ... && echo OK` doesn't work.
     client = None
-    if args.sram_cell is None:
+    if args.verilog is None:
         from virtuoso_bridge import VirtuosoClient
         client = VirtuosoClient.from_env()
+        for cand in (f"{pnr_dir}/{args.top}_import.v",
+                     f"{pnr_dir}/{args.top}.ipg_import_elc.v"):
+            out = client.execute_skill(f'isFileReadable("{cand}")').output.strip()
+            if out == "t":
+                args.verilog = cand
+                break
+        else:
+            sys.exit(f"ERROR: neither {args.top}_import.v nor "
+                     f"{args.top}.ipg_import_elc.v found in {pnr_dir}.")
+
+    # Auto-detect SRAM cell from the Verilog when not specified.
+    if args.sram_cell is None:
+        if client is None:
+            from virtuoso_bridge import VirtuosoClient
+            client = VirtuosoClient.from_env()
         detected = detect_sram_cells(client, args.verilog)
         if len(detected) == 1:
             args.sram_cell = detected[0]
