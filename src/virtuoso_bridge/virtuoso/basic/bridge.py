@@ -518,7 +518,8 @@ let((result winName ciwNum)
         """Take a screenshot of a Virtuoso window and download it locally.
 
         Args:
-            output: Local path for the screenshot. Auto-generated if *None*.
+            output: Local path for the screenshot. Uses the user artifact
+                screenshots directory if *None*.
             target: ``"ciw"`` (default), ``"current"``, a view name like
                 ``"schematic"``/``"layout"``/``"maestro"``, or an integer
                 window number.
@@ -584,7 +585,8 @@ let((result winName ciwNum)
         # Download
         filename = f"{label}_{stamp}.png"
         if output is None:
-            output = Path(filename)
+            from virtuoso_bridge.runtime_paths import artifact_dir
+            output = artifact_dir("screenshots") / filename
         else:
             output = Path(output)
             if output.is_dir():
@@ -809,7 +811,7 @@ let((result winName ciwNum)
         the SKILL Finder directory on the remote server by walking up from
         the ``virtuoso`` binary to ``doc/finder/SKILL``.  The directory is
         cached locally in *cache_dir* (default:
-        ``~/.cache/virtuoso_bridge/skill_finder/<host>/``) so subsequent
+        the user cache directory under ``skill_finder/<host>`` so subsequent
         calls are fast without additional network traffic.
 
         Parameters
@@ -835,7 +837,7 @@ let((result winName ciwNum)
             directory is auto-discovered on the remote server.
         cache_dir : str | Path | None
             Local cache directory for downloaded .fnd files.  If None,
-            defaults to ``~/.cache/virtuoso_bridge/skill_finder/<host>/``.
+            defaults to the user cache directory under ``skill_finder/<host>``.
 
         Returns
         -------
@@ -844,6 +846,7 @@ let((result winName ciwNum)
             ``name``, ``syntax``, ``description``, ``source_file``.
         """
         from pathlib import Path as _Path
+        from virtuoso_bridge.runtime_paths import cache_dir as runtime_cache_dir
         from virtuoso_bridge.virtuoso.skill_finder import (
             SKILLFinder,
             SearchMode,
@@ -853,7 +856,7 @@ let((result winName ciwNum)
         if cache_dir:
             cache_path = _Path(cache_dir).expanduser().resolve()
         else:
-            cache_root = _Path.home() / ".cache" / "virtuoso_bridge" / "skill_finder"
+            cache_root = runtime_cache_dir("skill_finder")
             cache_path = cache_root / self._skill_finder_cache_host()
 
         # Discover SKILL Finder root
@@ -955,7 +958,7 @@ let((result winName ciwNum)
             If None, auto-discovered from the virtuoso binary.
         cache_dir : str | Path | None
             Local cache directory.  If None, defaults to
-            ``~/.cache/virtuoso_bridge/skill_finder/<host>/``.
+            the user cache directory under ``skill_finder/<host>``.
 
         Returns
         -------
@@ -965,6 +968,7 @@ let((result winName ciwNum)
             has no More Info entry.
         """
         from pathlib import Path as _Path
+        from virtuoso_bridge.runtime_paths import cache_dir as runtime_cache_dir
         from virtuoso_bridge.virtuoso.skill_finder import SKILLFinder
         from virtuoso_bridge.virtuoso.skill_finder.more_info import (
             html_to_plain_text,
@@ -975,7 +979,7 @@ let((result winName ciwNum)
         if cache_dir:
             cache_path = _Path(cache_dir).expanduser().resolve()
         else:
-            cache_root = _Path.home() / ".cache" / "virtuoso_bridge" / "skill_finder"
+            cache_root = runtime_cache_dir("skill_finder")
             cache_path = cache_root / self._skill_finder_cache_host()
 
         # Determine doc root

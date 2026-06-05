@@ -1237,11 +1237,9 @@ def cli_screenshot() -> int:
     else:
         target = raw_target
 
-    from pathlib import Path
-    output_dir = Path("output")
-    output_dir.mkdir(exist_ok=True)
+    output = _SCREENSHOT_OUTPUT[0]
 
-    result = client.screenshot(output=output_dir, target=target)
+    result = client.screenshot(output=output, target=target)
     if result.status.value != "success":
         print(f"Error: {result.errors[0] if result.errors else 'screenshot failed'}")
         return 1
@@ -1393,6 +1391,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp_screenshot.add_argument(
         "target", nargs="?", default="ciw",
         help="ciw (default), current, a view name (schematic/layout/maestro), or window number")
+    sp_screenshot.add_argument("-o", "--output", default=None,
+                               help="Output file or directory (default: user artifact screenshots dir)")
     sp_screenshot.add_argument("-p", "--profile", default=None,
                                help="Connection profile")
     sp_screenshot.add_argument("--env", default=None,
@@ -1403,8 +1403,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search SKILL API documentation from Cadence .fnd files",
         description=(
             "Queries the Cadence SKILL Finder database (``doc/finder/SKILL/*.fnd``)"
-            " on the remote server.  On first run the database is downloaded to a local\n"
-            "cache (``~/.cache/virtuoso_bridge/skill_finder/<host>/``);\n"
+            " on the remote server.  On first run the database is downloaded to the\n"
+            "user cache directory under ``skill_finder/<host>``;\n"
             "subsequent runs use the cache without additional network traffic.\n\n"
             "Search modes:\n"
             "  fuzzy   case-insensitive substring match (default)\n"
@@ -1597,6 +1597,9 @@ def main(argv: list[str] | None = None) -> int:
     screenshot_target = getattr(args, "target", None)
     if screenshot_target is not None:
         _SCREENSHOT_TARGET[0] = screenshot_target
+    screenshot_output = getattr(args, "output", None)
+    if screenshot_output is not None:
+        _SCREENSHOT_OUTPUT[0] = screenshot_output
     if args.command == "snapshot":
         for k in _SNAPSHOT_OPTS:
             v = getattr(args, k, None)
@@ -1612,6 +1615,7 @@ def main(argv: list[str] | None = None) -> int:
 
 # Global profile for CLI commands (avoids changing all function signatures)
 _CLI_PROFILE: list[str | None] = [None]
+_SCREENSHOT_OUTPUT: list[str | None] = [None]
 
 
 def _get_cli_profile() -> str | None:

@@ -88,7 +88,7 @@ Useful first commands after the bridge is up:
 
 ```bash
 virtuoso-bridge windows       # list all open Virtuoso windows
-virtuoso-bridge screenshot    # screenshot CIW (or: current, N)
+virtuoso-bridge screenshot    # screenshot CIW to the user artifact directory
 virtuoso-bridge export-visio MyLib MyCell -o MyCell.vsdx  # Windows + Visio
 ```
 
@@ -134,7 +134,7 @@ All commands take `-p PROFILE` / `--env PATH` to pick a non-default config; run 
 | `eval 'EXPR'` / `eval --stdin` | Run an inline SKILL expression; supports multi-statement via auto-wrapped `progn(...)` |
 | **Interaction / diagnostics** | |
 | `windows` | List all open Virtuoso windows (number + name) |
-| `screenshot [ciw\|current\|N]` | Capture a window to `output/` |
+| `screenshot [ciw\|current\|N] [-o DIR\|FILE]` | Capture a window; defaults to the user artifact screenshots directory |
 | `dismiss-dialog` | X11 path: find and dismiss blocking GUI dialogs (saves you when SKILL channel deadlocks on a modal) |
 | `list-windows [--json]` | X11 path: enumerate Virtuoso-related windows, including frame/child IDs and suggested modal actions |
 | `dismiss-window WINDOW_ID [--action enter\|escape\|alt-y\|alt-n]` | X11 path: send an explicit action to one window ID returned by `list-windows` |

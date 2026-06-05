@@ -174,7 +174,7 @@ Your machine  ──SSH──►  Jump host (bastion)  ──SSH──►  Compu
 
 Same flow as remote, but with `VB_REMOTE_HOST=localhost` (or `127.0.0.1`):
 `virtuoso-bridge start` notices it's local, skips the SSH tunnel, and
-deploys the SKILL bridge files under the local bridge cache.  Paste the
+deploys the SKILL bridge files under the local bridge state directory.  Paste the
 `load(...)` line it prints into your CIW once, then connect from Python:
 
 ```python
@@ -279,7 +279,7 @@ virtuoso-bridge export-visio LIB CELL -o out.vsdx  # Windows + Visio/pywin32 sch
                                                    #   uv pip install -e .[visio]  to pull pywin32
                                                    #   --include-body-pins       to draw NMOS/PMOS bulk (B) nets
                                                    #   --stencil PATH            override circuit.vss location
-virtuoso-bridge screenshot      # screenshot CIW (or: current, N)
+virtuoso-bridge screenshot      # screenshot CIW to the user artifact directory
 virtuoso-bridge dismiss-dialog  # dismiss blocking GUI dialogs via X11
 virtuoso-bridge skill-find <query>  # search SKILL functions by name (fuzzy/prefix/suffix/exact/regex)
 virtuoso-bridge skill-info <fn>  # get detailed More Info docs for a SKILL function

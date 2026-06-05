@@ -16,6 +16,7 @@ from typing import Any, NamedTuple
 
 from virtuoso_bridge.env import load_vb_env
 from virtuoso_bridge.profile import resolve_profile
+from virtuoso_bridge.runtime_paths import artifact_dir
 from virtuoso_bridge.models import ExecutionStatus, SimulationResult
 from virtuoso_bridge.spectre.parsers import (
     parse_psf_ascii_directory,
@@ -128,7 +129,8 @@ def _run_spectre_local(
     output_format: str | None = "psfascii",
 ) -> _SpectreRunResult:
     """Run Spectre as a local subprocess."""
-    cwd = work_dir or netlist.parent
+    cwd = Path(work_dir) if work_dir is not None else artifact_dir("spectre", netlist.stem)
+    cwd.mkdir(parents=True, exist_ok=True)
     raw_dir = str((Path(cwd) / f"{netlist.stem}.raw").resolve())
     log_file = str((Path(cwd) / f"{netlist.stem}.log").resolve())
     cmd = _build_spectre_argv(
@@ -853,7 +855,8 @@ class SpectreSimulator:
                 errors=["Remote work dir is not configured"],
             )
 
-        base_output_dir = self._work_dir or netlist.parent
+        base_output_dir = Path(self._work_dir) if self._work_dir is not None else artifact_dir("spectre", netlist.stem)
+        base_output_dir.mkdir(parents=True, exist_ok=True)
         run_result = _run_spectre_remote(
             netlist=netlist,
             params=params,
