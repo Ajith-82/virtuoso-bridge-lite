@@ -273,14 +273,16 @@ virtuoso-bridge load FILE.il    # run a .il file in Virtuoso (uploads in SSH mod
 virtuoso-bridge eval 'EXPR'     # run inline SKILL expression
 virtuoso-bridge eval --stdin    # multi-line SKILL via stdin (auto-wrapped in progn)
 virtuoso-bridge windows         # list all open Virtuoso windows + focused session
-virtuoso-bridge snapshot        # focused maestro: 4 SKILL probe sections to stdout
-virtuoso-bridge snapshot -o ROOT  # full disk dump (raw + filtered XMLs + per-point run files)
+virtuoso-bridge snapshot        # brief summary of the focused Virtuoso window
+virtuoso-bridge snapshot -o ROOT  # full maestro disk dump (raw + filtered XMLs + per-point run files)
 virtuoso-bridge export-visio LIB CELL -o out.vsdx  # Windows + Visio/pywin32 schematic export
                                                    #   uv pip install -e .[visio]  to pull pywin32
                                                    #   --include-body-pins       to draw NMOS/PMOS bulk (B) nets
                                                    #   --stencil PATH            override circuit.vss location
 virtuoso-bridge screenshot      # screenshot CIW to the user artifact directory
 virtuoso-bridge dismiss-dialog  # dismiss blocking GUI dialogs via X11
+virtuoso-bridge list-windows --json  # list Virtuoso-related X11 windows
+virtuoso-bridge dismiss-window WINDOW_ID --action enter  # dismiss one explicit X11 window
 virtuoso-bridge skill-find <query>  # search SKILL functions by name (fuzzy/prefix/suffix/exact/regex)
 virtuoso-bridge skill-info <fn>  # get detailed More Info docs for a SKILL function
 ```
