@@ -43,46 +43,69 @@ quickstart.
   uv pip install -e .
   ```
 
-## Worked example — tailored to this machine's `~/.ssh/config`
+## Reuse the SSH-alias pattern you already have
 
-Your `~/.ssh/config` defines (user `ajithkv`, port `5148`, `ForwardAgent yes`):
+> **Note:** the `server01` / `server02` / `server01_ext` hosts in this machine's
+> `~/.ssh/config` are homelab boxes — **they do not run Virtuoso.** They're worth
+> looking at only because they already demonstrate the exact pattern you need for
+> the real HPC hosts: an **alias** carrying `User`, a **non-standard `Port`**
+> (`5148`), and `ForwardAgent yes`:
+>
+> ```sshconfig
+> Host server01_ext
+>     HostName 90.213.214.193
+>     User ajithkv
+>     Port 5148
+>     ForwardAgent yes
+> ```
+>
+> Replicate that shape for your actual EDA login + compute hosts, then point the
+> bridge at those aliases. Placeholders below: **`hpc-login`** (the gateway you
+> can reach from the laptop) and **`hpc-node`** (where Virtuoso runs).
 
-| Alias          | HostName        | Reachable from | Role in this setup            |
-|----------------|-----------------|----------------|-------------------------------|
-| `server01_ext` | 90.213.214.193  | laptop (public)| gateway / jump host           |
-| `server01`     | 192.168.0.113   | internal LAN   | internal node                 |
-| `server02`     | 192.168.0.186   | internal LAN   | internal node                 |
+First add the real hosts to `~/.ssh/config` (adjust user/port/proxy to your site):
 
-Pick the scenario that matches **where Virtuoso actually runs.**
+```sshconfig
+Host hpc-login
+    HostName login.hpc.example.edu
+    User <you>
+    # Port <n>            # only if non-standard
 
-### Scenario A — Virtuoso on an internal node, reached via the gateway
+Host hpc-node
+    HostName <compute-node-or-ip>
+    User <you>
+    ProxyJump hpc-login   # optional; the bridge can also do the jump itself
+```
 
-Virtuoso on `server02` (internal), tunnelled through `server01_ext` (public):
+Confirm it works with no prompt, then pick the scenario matching **where Virtuoso
+actually runs.**
+
+### Scenario A — Virtuoso on a compute node, reached via a gateway
 
 ```bash
-virtuoso-bridge init ajithkv@server02 -J ajithkv@server01_ext
+virtuoso-bridge init <you>@hpc-node -J <you>@hpc-login
 ```
 `~/.virtuoso-bridge/.env`:
 ```dotenv
-VB_REMOTE_HOST=server02              # alias → 192.168.0.186:5148, user ajithkv
-VB_REMOTE_USER=ajithkv
-VB_JUMP_HOST=server01_ext            # alias → 90.213.214.193:5148 (public gateway)
+VB_REMOTE_HOST=hpc-node              # alias → the machine running Virtuoso
+VB_REMOTE_USER=<you>
+VB_JUMP_HOST=hpc-login               # alias → the gateway you reach from the laptop
 # VB_REMOTE_PORT / VB_LOCAL_PORT: leave unset (auto — bridge daemon port, not SSH)
 ```
-The bridge issues `ssh -J ajithkv@server01_ext ajithkv@server02`; both aliases are
-resolved from `~/.ssh/config`, so port `5148` is applied to each hop
+The bridge issues `ssh -J <you>@hpc-login <you>@hpc-node`; both aliases are
+resolved from `~/.ssh/config`, so any custom port is applied to each hop
 automatically.
 
-### Scenario B — Virtuoso on the gateway host itself (no jump)
+### Scenario B — Virtuoso on the directly-reachable host (no jump)
 
-If Virtuoso runs on the directly-reachable host (`server01_ext`), skip the jump:
+If Virtuoso runs on a host you can SSH to directly, skip the jump:
 
 ```bash
-virtuoso-bridge init ajithkv@server01_ext
+virtuoso-bridge init <you>@hpc-login
 ```
 ```dotenv
-VB_REMOTE_HOST=server01_ext          # the machine running Virtuoso
-VB_REMOTE_USER=ajithkv
+VB_REMOTE_HOST=hpc-login             # the machine running Virtuoso
+VB_REMOTE_USER=<you>
 # no VB_JUMP_HOST
 ```
 
@@ -139,6 +162,6 @@ SKILL always goes **through** the bridge (`client.execute_skill` /
 | `[daemon] NO RESPONSE` | `load("…")` not pasted into the CIW, or Virtuoso not running on that node. Re-run `status` to reprint the line. |
 | Tunnel won't start / auth fails | `ssh -J <jump> <remote> echo ok` must work with **no prompt** — `BatchMode=yes` gives no password fallback. Fix keys/agent first. |
 | Connects to wrong host | `VB_REMOTE_HOST` = the node running Virtuoso; `VB_JUMP_HOST` = the gateway. Don't set remote host to the gateway. |
-| "Connection refused" on the SSH hop | You used a raw IP instead of the alias, so it tried port 22 — use the `~/.ssh/config` alias so port `5148` is applied. |
+| "Connection refused" on the SSH hop | You used a raw IP instead of the alias, so it tried port 22 — use the `~/.ssh/config` alias so your custom `Port` is applied. |
 | 15–30 s stalls on connect | Usually GSSAPI/Kerberos or a slow gateway; the bridge already disables GSSAPI and allows longer jump-host settle time, so first connects are just slow, not broken. |
 | Spectre `NOT FOUND` | Independent from the SKILL bridge. Set `VB_CADENCE_CSHRC` if `spectre` isn't on the remote `PATH` (see `AGENTS.md` → "How Spectre is located"). |
