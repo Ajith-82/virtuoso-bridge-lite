@@ -486,8 +486,10 @@ def _print_spectre_status(profile: str | None, suffix: str) -> None:
     For remote mode: SSH-based check via SSHClient.
 
     Strategy (remote): try ``which spectre`` directly first (works when the
-    user's login shell already has Cadence on PATH).  If that fails and
-    VB_CADENCE_CSHRC is set, source it in a csh sub-shell and retry.
+    user's login shell already has Cadence on PATH).  If that fails, establish
+    the Cadence env in a csh sub-shell — loading any VB_LMOD_MODULES via Lmod
+    and/or sourcing VB_CADENCE_CSHRC/VB_MENTOR_CSHRC (see
+    cadence_env_setup_csh) — and retry.
     """
     import shutil
     import subprocess
@@ -538,15 +540,14 @@ def _print_spectre_status(profile: str | None, suffix: str) -> None:
             return
         runner._verbose = False
 
-        spectre_bin = (
-            os.getenv(f"VB_SPECTRE_BIN{suffix}", "").strip()
-            or os.getenv("VB_SPECTRE_BIN", "").strip()
-        )
+        from virtuoso_bridge.spectre.runner import _env_first
+
+        spectre_bin = _env_first("VB_SPECTRE_BIN", suffix)
 
         if spectre_bin:
             # Explicit binary path — skip auto-detection.
             quoted = shlex.quote(spectre_bin)
-            check_cmd = f"{quoted} -V 2>&1 | head -1"
+            check_cmd = f"{quoted} -V 2>&1"
             print("\n[spectre] probing...", flush=True)
             result = runner.run_command(check_cmd, timeout=60)
             stdout = result.stdout.strip()
@@ -577,12 +578,17 @@ def _print_spectre_status(profile: str | None, suffix: str) -> None:
         # meta-module emits many ``Loading module …`` chatter lines (and one
         # ``Loading module cadence/spectre/…`` that would false-match a bare
         # "/"+"spectre" scan), so a marker is the only robust anchor.
-        from virtuoso_bridge.spectre.runner import cadence_env_setup_csh
+        from virtuoso_bridge.spectre.runner import (
+            cadence_env_setup_csh,
+            remote_tool_probe,
+        )
         setup = cadence_env_setup_csh(suffix)
+        # Emit the FULL `spectre -V` output (no `head -1`): the ``@(#)$CDS:``
+        # banner the parser below scans for is usually not the first line.
         fast = (
             'sp=`which spectre 2>/dev/null`; '
             '[ -n "$sp" ] && { printf "VB_SPECTRE_PATH=%s\\n" "$sp"; '
-            'spectre -V 2>&1 | head -1; }'
+            'spectre -V 2>&1; }'
         )
         if setup:
             # Keep csh script out of bash's view — ``!`` / backticks /
@@ -600,11 +606,9 @@ def _print_spectre_status(profile: str | None, suffix: str) -> None:
                 'printf "VB_SPECTRE_PATH=%s\\n" "`which spectre`"; '
                 'spectre -V'
             )
-            slow = f"csh -f -c {shlex.quote(csh_script)} 2>&1"
-            combined = f"{{ {fast}; }} || {{ {slow}; }}"
+            check_cmd = remote_tool_probe(fast, csh_script)
         else:
-            combined = fast
-        check_cmd = f"bash -l -c {shlex.quote(combined)}"
+            check_cmd = f"bash -l -c {shlex.quote(fast)}"
         print("\n[spectre] probing...", flush=True)
         result = runner.run_command(check_cmd, timeout=60)
         stdout = result.stdout.strip()
@@ -687,8 +691,8 @@ def cli_license() -> int:
     # VB_SPECTRE_BIN, an Lmod module set (VB_LMOD_MODULES), a sourced cshrc
     # (VB_CADENCE_CSHRC/VB_MENTOR_CSHRC), or spectre already on PATH.  Only warn
     # when nothing is configured — check_license still tries a bare PATH lookup.
-    from virtuoso_bridge.spectre.runner import cadence_env_setup_csh
-    spectre_bin = os.getenv(f"VB_SPECTRE_BIN{suffix}", "").strip() or os.getenv("VB_SPECTRE_BIN", "").strip()
+    from virtuoso_bridge.spectre.runner import _env_first, cadence_env_setup_csh
+    spectre_bin = _env_first("VB_SPECTRE_BIN", suffix)
     if not spectre_bin and not cadence_env_setup_csh(suffix):
         print("No spectre env configured (VB_SPECTRE_BIN / VB_LMOD_MODULES / "
               "VB_CADENCE_CSHRC) — trying spectre on the remote PATH.")

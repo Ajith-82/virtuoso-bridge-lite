@@ -82,7 +82,7 @@ def _env_first(name: str, suffix: str = "") -> str:
 
 
 # Default location of Lmod's csh init script.  Sourcing it defines the
-# `module` command inside a bare, non-interactive `csh -c` (which does not
+# `module` command inside a bare, non-interactive `csh -f -c` (which does not
 # inherit an interactive shell's module setup).  Override with VB_LMOD_INIT
 # when your site installs Lmod elsewhere; the `source` is guarded so a wrong
 # path is harmless when `module` is already defined (e.g. via /etc/csh.cshrc).
@@ -93,7 +93,9 @@ def cadence_env_setup_csh(suffix: str = "") -> str:
     """Build a ``;``-joined csh prelude that establishes the Cadence/Spectre
     environment in a fresh, non-interactive remote shell.
 
-    Spectre is invoked over SSH as ``csh -c '<prelude>; spectre …'``, so this
+    Spectre is invoked over SSH as ``csh -f -c '<prelude>; spectre …'`` —
+    ``-f`` skips ``~/.cshrc``, which in the Lmod use case carries no
+    tool/project variables; the env comes only from this prelude — so this
     prelude is the single place that teaches every code path (status probe,
     license check, and real runs) how to make the tools reachable.  It layers,
     in order (each optional, later layers win):
@@ -111,15 +113,18 @@ def cadence_env_setup_csh(suffix: str = "") -> str:
     lines: list[str] = []
     modules = _env_first("VB_LMOD_MODULES", suffix)
     if modules:
+        # Plain whitespace split (not shlex): module names never contain quotes
+        # or spaces, and shlex.split would raise ValueError on an unbalanced
+        # quote in user-supplied VB_LMOD_MODULES.
         names = " ".join(
-            shlex.quote(m) for m in shlex.split(modules.replace(",", " "))
+            shlex.quote(m) for m in modules.replace(",", " ").split()
         )
         if names:
             init = _env_first("VB_LMOD_INIT", suffix) or DEFAULT_LMOD_INIT_CSH
             qinit = shlex.quote(init)
             # Source Lmod's csh init to define $LMOD_CMD, then load via the
             # Lmod backend directly rather than the `module` alias.  In a
-            # single `csh -c`, aliases defined by a sourced file are NOT
+            # single `csh -f -c`, aliases defined by a sourced file are NOT
             # active for words on the same parse line (classic csh gotcha),
             # so `module load` would fail with "module: Command not found".
             # `$LMOD_CMD` is a plain variable, resolved at run time, so
@@ -128,11 +133,83 @@ def cadence_env_setup_csh(suffix: str = "") -> str:
             # via /etc/csh.cshrc) and the init file is absent.
             lines.append(f"if ( -f {qinit} ) source {qinit}")
             lines.append(f"if ( $?LMOD_CMD ) eval `$LMOD_CMD csh load {names}`")
+            # If Lmod never got initialized (init file absent AND site did not
+            # pre-define $LMOD_CMD), the load above silently no-ops.  Surface a
+            # warning on stdout so it shows up in the 2>&1-merged status output.
+            # The `virtuoso-bridge:` prefix can't be mistaken for a
+            # VB_SPECTRE_PATH=/SPECTRE_PATH=/@(#)$CDS: marker or a grep'd
+            # NAME= env line by any of the parsers.
+            lines.append(
+                'if ( ! $?LMOD_CMD ) echo "virtuoso-bridge: VB_LMOD_MODULES '
+                'set but Lmod is not initialized (set VB_LMOD_INIT)"'
+            )
     for var in ("VB_CADENCE_CSHRC", "VB_MENTOR_CSHRC"):
         cshrc = _env_first(var, suffix)
         if cshrc:
             lines.append(f"source {shlex.quote(cshrc)}")
     return "; ".join(lines)
+
+
+# sed program that rewrites `NAME=VALUE` env lines into `export NAME='VALUE'`,
+# single-quoting VALUE so values containing spaces, `$` or backticks survive a
+# bash `eval` verbatim instead of being re-expanded or truncated.  VALUE's own
+# single quotes are escaped as '\'' by the first substitution first (safe on
+# the whole line because env var NAMEs never contain single quotes).
+_ENV_EXPORT_SED = (
+    r"s/'/'\\''/g;"
+    r"s/^\([A-Za-z_][A-Za-z0-9_]*\)=\(.*\)$/export \1='\2'/"
+)
+
+
+def cadence_env_import_bash(setup_csh: str, var_pattern: str) -> str:
+    """Return a bash fragment that imports selected Cadence env vars into bash.
+
+    Runs ``csh -f -c '<setup_csh>; env'`` (the same csh prelude spectre runs
+    under), keeps only the lines whose ``NAME`` matches *var_pattern* (a
+    ``grep -E`` regex, e.g. ``^CDSHOME=``), and ``eval``s them as ``export``
+    statements so ``which spectre``/licensing see the same PATH and license
+    vars a real run would.  Each value is safely single-quoted (embedded single
+    quotes escaped), so values with spaces, ``$`` or backticks round-trip
+    exactly rather than being word-split or re-expanded by bash.
+
+    The fragment ends with ``; `` so callers can prepend it to a larger
+    command.  Returns ``""`` when *setup_csh* is empty.
+    """
+    if not setup_csh:
+        return ""
+    csh_arg = shlex.quote(f"{setup_csh}; env")
+    return (
+        'eval "$(csh -f -c ' + csh_arg + ' 2>/dev/null '
+        '| grep -E ' + shlex.quote(var_pattern) + ' '
+        '| sed ' + shlex.quote(_ENV_EXPORT_SED) + ')" 2>/dev/null; '
+    )
+
+
+def remote_tool_probe(fast_body: str, csh_body: str) -> str:
+    """Compose one remote command that probes for a Cadence tool.
+
+    Tries *fast_body* (a bash snippet assuming the tool is already on PATH)
+    and, only if it fails, falls back to *csh_body* run inside a fresh
+    ``csh -f -c`` (which establishes the Cadence environment via Lmod modules /
+    cshrc files, see :func:`cadence_env_setup_csh`).
+
+    The two are fused into a single SSH round-trip —
+    ``{ fast } || { csh -f -c '…' 2>&1 }`` wrapped in ``bash -l -c '…'`` — so
+    congested jump hosts pay one TCP + sshd handshake instead of two.  csh's
+    stderr is merged (``2>&1``) so module chatter reaches the caller's
+    marker parser without breaking the pipe.  Each caller keeps its own
+    marker conventions inside *fast_body* / *csh_body*.
+
+    Note the ``-f``: startup files (``~/.cshrc``) are deliberately skipped.
+    In the Lmod use case they carry no tool/project variables — the
+    environment must come entirely from the explicit per-project module /
+    cshrc config (``VB_LMOD_MODULES{_PROFILE}``, ``VB_CADENCE_CSHRC…``), so
+    every code path (probe, license check, real run) uses the same hermetic
+    ``csh -f`` shell and behaves identically.
+    """
+    slow = f"csh -f -c {shlex.quote(csh_body)} 2>&1"
+    combined = f"{{ {fast_body}; }} || {{ {slow}; }}"
+    return f"bash -l -c {shlex.quote(combined)}"
 
 def spectre_mode_args(mode: str) -> list[str]:
     """Return standard Spectre CLI arguments for a named simulation mode."""
@@ -312,7 +389,7 @@ def _run_spectre_remote(
     exec_cmd = (
         f"{env_setup}"
         f"mkdir -p {shlex.quote(remote_raw_dir)} && "
-        f"csh -c {shlex.quote(csh_inner)} & "
+        f"csh -f -c {shlex.quote(csh_inner)} & "
         f"SPID=$!; echo $SPID > {shlex.quote(pid_file)}; wait $SPID"
     )
 
@@ -810,13 +887,13 @@ class SpectreSimulator:
         # VB_SPECTRE_BIN is set, since modules also provide runtime libs.
         setup = cadence_env_setup_csh(suffix)
         if setup:
-            csh_arg = shlex.quote(f"{setup}; env")
             env_setup = (
                 'HOSTNAME=`hostname 2>/dev/null || echo localhost`; export HOSTNAME && '
                 'export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" && '
-                f'eval "$(csh -c {csh_arg} 2>/dev/null '
-                f"| grep -E '^(PATH|LD_LIBRARY_PATH|LM_LICENSE_FILE|CDS_LIC_FILE|CDS)=' "
-                f"| sed 's/^/export /')\" 2>/dev/null; "
+                + cadence_env_import_bash(
+                    setup,
+                    "^(PATH|LD_LIBRARY_PATH|LM_LICENSE_FILE|CDS_LIC_FILE|CDS)=",
+                )
             )
         else:
             env_setup = ""
@@ -832,7 +909,7 @@ class SpectreSimulator:
         check_script = (
             f'{env_setup}'
             f'echo "SPECTRE_PATH={path_expr}"; '
-            f'{ver_cmd} 2>&1 | head -1; '
+            f'{ver_cmd} 2>&1; '
             'lmstat -a 2>/dev/null | grep -E "Users of" | grep "licenses in use" | grep -v "0 licenses in use"'
         )
 
