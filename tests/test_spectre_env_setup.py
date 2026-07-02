@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+
 import pytest
 
 from virtuoso_bridge.spectre.runner import (
     DEFAULT_LMOD_INIT_CSH,
+    cadence_env_import_bash,
     cadence_env_setup_csh,
+    remote_tool_probe,
 )
 
 _ENV_VARS = (
@@ -87,3 +92,87 @@ def test_paths_with_spaces_are_quoted(monkeypatch):
     monkeypatch.setenv("VB_LMOD_INIT", "/opt/my lmod/init/csh")
     out = cadence_env_setup_csh()
     assert "'/opt/my lmod/init/csh'" in out
+
+
+def test_stray_quote_in_modules_does_not_raise(monkeypatch):
+    # A whitespace split (not shlex) must tolerate an unbalanced quote in the
+    # user-supplied value without raising ValueError.
+    monkeypatch.setenv("VB_LMOD_MODULES", "spectre/23.1 bad'module")
+    out = cadence_env_setup_csh()  # must not raise
+    assert "csh load" in out
+    assert "spectre/23.1" in out
+
+
+def test_not_initialized_warning_present_when_modules_set(monkeypatch):
+    monkeypatch.setenv("VB_LMOD_MODULES", "spectre/23.1")
+    out = cadence_env_setup_csh()
+    # A guarded warning surfaces (on stdout, merged with 2>&1) when Lmod never
+    # gets initialized, instead of silently no-op'ing the module load.
+    assert "if ( ! $?LMOD_CMD )" in out
+    assert "Lmod is not initialized" in out
+    # The warning prefix can't be mistaken for any marker/env parser line.
+    assert "virtuoso-bridge:" in out
+
+
+def test_no_warning_when_no_modules(monkeypatch):
+    monkeypatch.setenv("VB_CADENCE_CSHRC", "/home/x/cad.cshrc")
+    out = cadence_env_setup_csh()
+    assert "Lmod is not initialized" not in out
+
+
+def test_env_import_bash_empty_when_no_setup():
+    assert cadence_env_import_bash("", "^CDSHOME=") == ""
+
+
+def test_env_import_bash_single_quotes_exports():
+    frag = cadence_env_import_bash("source /x/cad.cshrc", "^CDSHOME=")
+    # Runs the csh prelude's env through grep/sed and eval's single-quoted
+    # exports (values with spaces/$ survive verbatim).
+    assert "csh -f -c" in frag
+    assert "grep -E" in frag
+    assert "'^CDSHOME='" in frag
+    assert frag.rstrip().endswith(";")
+    # The sed program emits `export NAME='VALUE'` (single-quoted the value),
+    # not the old unquoted `s/^/export /`.  The literal single quotes are
+    # shell-escaped by shlex.quote, so the backref rewrite appears as
+    # `export \1=` (the round-trip test below proves the quoting is correct).
+    assert "export \\1=" in frag
+    assert "s/^/export /" not in frag
+
+
+def test_env_import_bash_value_round_trips_through_sed_and_bash():
+    """F5: the generated sed program must single-quote imported values so a
+    value with spaces and a ``$`` round-trips exactly through real sed+bash."""
+    if not (shutil.which("bash") and shutil.which("sed")):
+        pytest.skip("bash/sed not available")
+
+    frag = cadence_env_import_bash("source /x/cad.cshrc", "^CDSHOME=")
+    # Extract just the `sed '<program>'` portion and drive it directly, feeding
+    # a synthetic env line with spaces, a `$`, and backticks.
+    import re
+    m = re.search(r"\| sed (?P<sed>'.*')\)", frag)
+    assert m, frag
+    sed_arg = m.group("sed")
+
+    env_line = "CDSHOME=/opt/my tools/$weird `x`"
+    import shlex
+    script = (
+        "eval \"$(printf %s " + shlex.quote(env_line)
+        + " | grep -E '^CDSHOME=' | sed " + sed_arg + ")\"; "
+        'printf "%s" "$CDSHOME"'
+    )
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "/opt/my tools/$weird `x`"
+
+
+def test_remote_tool_probe_composes_fast_then_slow_hermetic_csh():
+    cmd = remote_tool_probe("which spectre", "setup; which spectre")
+    # Fused single round-trip: bash fast path OR csh fallback.
+    assert cmd.startswith("bash -l -c ")
+    assert "which spectre" in cmd
+    # F1: the csh fallback must be hermetic `csh -f -c` (~/.cshrc holds no
+    # tool/project variables in the Lmod use case; env comes only from the
+    # per-project module/cshrc config, same as real runs); stderr is merged.
+    assert "csh -f -c" in cmd
+    assert "2>&1" in cmd

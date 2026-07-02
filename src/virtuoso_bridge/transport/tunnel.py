@@ -300,16 +300,14 @@ class SSHClient:
         # LD_LIBRARY_PATH (e.g. oss/python) would load here but then die at
         # daemon launch, and importing its PATH could shadow the system-python3
         # fallback with that unusable interpreter.
-        from virtuoso_bridge.spectre.runner import cadence_env_setup_csh
+        from virtuoso_bridge.spectre.runner import (
+            cadence_env_import_bash,
+            cadence_env_setup_csh,
+        )
         suffix = f"_{self._profile}" if self._profile else ""
         setup = cadence_env_setup_csh(suffix)
         if setup:
-            csh_arg = shlex.quote(f"{setup}; env")
-            detect_cmd = (
-                f'eval "$(csh -c {csh_arg} 2>/dev/null '
-                "| grep -E '^CDSHOME=' | sed 's/^/export /')\" 2>/dev/null; "
-                + detect_cmd
-            )
+            detect_cmd = cadence_env_import_bash(setup, "^CDSHOME=") + detect_cmd
         runner = self._require_runner()
         result = runner.run_command(detect_cmd)
         output = result.stdout.strip()

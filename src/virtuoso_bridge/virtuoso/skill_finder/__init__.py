@@ -28,6 +28,55 @@ from typing import Literal
 
 from .parser import SkillEntry, parse_fnd_directory
 
+# Matches csh's builtin `which` alias-report line, e.g.
+# "virtuoso: aliased to /tools/cadence/IC618/tools/bin/virtuoso -leaf".
+_CSH_ALIAS_RE = re.compile(r"^virtuoso:\s*aliased to\s+(.*)$")
+
+
+def _parse_virtuoso_path(stdout: str) -> str:
+    """Extract an absolute virtuoso executable path from probe *stdout*.
+
+    Accepts a bare absolute path ending in ``/virtuoso``, or extracts one
+    from a csh ``virtuoso: aliased to <definition>`` line (only if the
+    definition itself contains an absolute ``/virtuoso`` path — otherwise
+    that line is skipped rather than accepted as garbage).  Bare/relative
+    tokens (e.g. a lone ``virtuoso`` or ``bin/virtuoso``) are rejected: they
+    would otherwise feed a `dirname` walk that can spin (see
+    :func:`_build_doc_finder_walk_script`).
+    """
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if line.startswith("/") and line.endswith("/virtuoso"):
+            return line
+        alias_match = _CSH_ALIAS_RE.match(line)
+        if alias_match:
+            for token in alias_match.group(1).split():
+                if token.startswith("/") and token.endswith("/virtuoso"):
+                    return token
+    return ""
+
+
+def _build_doc_finder_walk_script(virtuoso_path: str) -> str:
+    """Build the shell snippet that walks up from *virtuoso_path* looking
+    for ``doc/finder/SKILL``.
+
+    Terminates even if fed a relative or otherwise degenerate path: besides
+    the caller only ever passing an absolute path (see
+    :func:`_parse_virtuoso_path`), the loop itself stops as soon as
+    ``dirname`` stops making progress (``parent == p``), rather than relying
+    solely on the ``$p != "/"`` guard — a relative single-component path
+    like ``bin/virtuoso`` would otherwise dirname to ``.`` forever.
+    """
+    return (
+        f'p="{virtuoso_path}"; '
+        'while [ -n "$p" ] && [ "$p" != "/" ]; do '
+        '  if [ -d "$p/doc/finder/SKILL" ]; then echo "$p/doc/finder/SKILL"; exit 0; fi; '
+        '  parent=$(dirname "$p"); '
+        '  if [ "$parent" = "$p" ]; then break; fi; '
+        '  p="$parent"; '
+        'done; exit 1'
+    )
+
 
 class SearchMode(enum.Enum):
     """Supported search modes for SKILL Finder queries."""
@@ -118,40 +167,31 @@ class SKILLFinder:
         # 1. Establish Cadence env, then find virtuoso.  Same detection shape
         # as the spectre probe (cli._print_spectre_status): a bash fast path
         # for when virtuoso is already on PATH, falling back to a csh shell
-        # that loads modules / sources cshrc.  csh module chatter goes to
-        # stderr and is discarded (2>/dev/null).
-        from virtuoso_bridge.spectre.runner import cadence_env_setup_csh
+        # that loads modules / sources cshrc.  The composition itself is
+        # shared with the spectre probe (remote_tool_probe) — only the
+        # fast/csh bodies and the marker parsing below are specific to
+        # SKILL Finder discovery.  The probe runs ``csh -f -c`` (hermetic:
+        # ~/.cshrc carries no tool/project variables in the Lmod use case),
+        # so the environment comes solely from the per-project module /
+        # cshrc config, identically to real runs.
+        from virtuoso_bridge.spectre.runner import cadence_env_setup_csh, remote_tool_probe
 
         suffix = f"_{profile}" if profile else ""
         setup = cadence_env_setup_csh(suffix)
         fast = "which virtuoso 2>/dev/null"
         if setup:
-            csh_inner = f"{setup}; which virtuoso"
-            slow = f"csh -f -c {shlex.quote(csh_inner)} 2>/dev/null"
-            combined = f"{{ {fast}; }} || {{ {slow}; }}"
+            csh_body = f"{setup}; which virtuoso"
+            find_virtuoso_script = remote_tool_probe(fast, csh_body)
         else:
-            combined = fast
-        find_virtuoso_script = f"bash -l -c {shlex.quote(combined)}"
+            find_virtuoso_script = f"bash -l -c {shlex.quote(fast)}"
         r = runner.run_command(find_virtuoso_script, timeout=30)
 
-        virtuoso_path = ""
-        for line in (r.stdout or "").splitlines():
-            line = line.strip()
-            # Ignore any stray chatter; accept only a real virtuoso path.
-            if line.endswith("/virtuoso") or line == "virtuoso":
-                virtuoso_path = line
-                break
+        virtuoso_path = _parse_virtuoso_path(r.stdout)
         if not virtuoso_path:
             return None
 
         # 2. Walk up from virtuoso to find doc/finder/SKILL.
-        walk_script = (
-            f'p="{virtuoso_path}"; '
-            'while [ -n "$p" ] && [ "$p" != "/" ]; do '
-            '  if [ -d "$p/doc/finder/SKILL" ]; then echo "$p/doc/finder/SKILL"; exit 0; fi; '
-            '  p=$(dirname "$p"); '
-            'done; exit 1'
-        )
+        walk_script = _build_doc_finder_walk_script(virtuoso_path)
         r2 = runner.run_command(f"bash -c {shlex.quote(walk_script)}", timeout=15)
         if r2.returncode == 0 and r2.stdout.strip():
             return Path(r2.stdout.strip())
